@@ -1,0 +1,409 @@
+# HANDOFF — Agent Appartement SeLoger
+ 
+> Document de reprise pour un autre modèle. Lecture unique de ce fichier = compréhension complète du projet, de son état actuel, et de ce qu'il reste à faire.
+>
+> **Version générique et anonymisée**, sans informations personnelles. Remplacez les champs `[À_DÉFINIR]` par votre propre situation avant utilisation.
+ 
+---
+ 
+## 🎯 Objectif du projet
+ 
+Automatiser la recherche d'appartement dans un secteur donné.
+ 
+**Le problème initial :** recevoir des mails d'alerte SeLoger, cliquer sur chaque annonce, vérifier manuellement ses critères, appeler le propriétaire ou envoyer un message type. Répétitif et chronophage.
+ 
+**La solution mise en place :** Un agent IA autonome qui tourne 24h/24, détecte les nouvelles alertes SeLoger dans Gmail, analyse chaque annonce avec une IA, envoie une notification Telegram avec verdict + message prêt à copier, et enregistre tout dans un Google Sheet pour un futur bilan cartographique.
+ 
+---
+ 
+## 📊 État actuel du projet
+ 
+**Version en production : v1.5** — fonctionnelle et déployée.
+**Statut : ACTIF** — le déclencheur automatique tourne toutes les 10 minutes.
+ 
+> 🔘 **v1.5 — Bouton interactif Telegram.** Comme le scraping est bloqué (voir DataDome), quasiment
+> toutes les annonces sortent en statut PARTIEL. Chaque notif PARTIEL porte un bouton
+> **« ✍️ Rédige-moi le message »**. Au clic, Telegram appelle le script (webhook `doPost`), qui
+> régénère le message propriétaire (ville + accroche stockées par annonce) et l'envoie prêt à copier.
+> **Nécessite un déploiement en Application Web + `configurerWebhook()`** — voir section dédiée.
+ 
+> ⚠️ **IMPORTANT — Le scraping SeLoger ne fonctionne PLUS (HTTP 403 / DataDome).**
+> SeLoger bloque les requêtes depuis Google Apps Script (IP datacenter + défi JS). L'agent
+> fonctionne désormais **uniquement avec les données du mail d'alerte** (prix, surface, pièces,
+> ville). Les champs étage/balcon/parking ne sont plus extraits automatiquement → statut PARTIEL
+> normal, à vérifier manuellement d'un clic sur l'URL. Contourner DataDome = payant (API scraping
+> type ScrapingBee ~30€/mois) et jugé non rentable pour 3 champs. Voir section "DataDome" plus bas.
+ 
+### Ce qui fonctionne
+- ✅ Détection des mails SeLoger non lus dans Gmail
+- ✅ Extraction des URLs d'annonces (regex élargie v1.4 : tracking + redirections)
+- ✅ Extraction des données depuis le **corps du mail** (prix, surface décimale, pièces, ville via code postal)
+- ✅ Analyse IA via Groq (LLaMA 3.3 70B) selon les critères définis par l'utilisateur
+- ✅ Notifications Telegram différenciées (urgente / normale / silencieuse)
+- ✅ Enregistrement dans Google Sheet (22 colonnes)
+- ✅ Message propriétaire enrichi automatiquement par l'IA
+- ✅ Géocodage GPS (Nominatim + fallback par ville)
+- ✅ Dédoublonnage des URLs déjà traitées
+### Ce qui ne fonctionne plus / limites connues
+- ❌ **Scraping des pages SeLoger** : bloqué par DataDome (HTTP 403). Étage/balcon/parking/téléphone
+  ne sont plus extraits auto → statut PARTIEL à vérifier manuellement (voir section DataDome).
+- ⚠️ **Géocodage Nominatim** : renvoie souvent du non-JSON → fallback coordonnées de la ville
+  (précision "ville" suffisante pour la future carte). À fiabiliser au moment du bilan cartographique.
+### Ce qui reste à faire
+- ⏳ **Bilan cartographique HTML** : page Leaflet.js avec marqueurs colorés selon statut final, à générer quand la recherche sera terminée. Les colonnes GPS du Sheet sont déjà prêtes.
+- ⏳ **Éventuelle bascule vers version payante** (n8n + WhatsApp + Twilio, ~28€/mois) si la version gratuite montre ses limites. Discuté mais pas engagé.
+---
+ 
+## 🏗️ Architecture technique
+ 
+### Stack (100% gratuit)
+ 
+| Composant | Outil | Rôle |
+|---|---|---|
+| Orchestrateur | Google Apps Script | Exécute le flux toutes les 10 min |
+| Boîte mail | Gmail | Reçoit les alertes SeLoger |
+| IA d'analyse | Groq API (LLaMA 3.3 70B) | Analyse critères + génère message enrichi |
+| Notifications | Telegram Bot API | Envoie alertes + résumés + messages prêts |
+| Base de données | Google Sheets (22 colonnes) | Stocke annonces + colonnes de suivi manuel |
+| Géocodage | Nominatim (OpenStreetMap) | Latitude/longitude de chaque annonce |
+ 
+### Pourquoi ces choix
+- **Groq** : Gemini demandait la facturation même pour le tier gratuit. Groq gratuit (1500 req/jour), très rapide.
+- **Telegram** : WhatsApp bloque les bots non officiels. Telegram est la seule alternative gratuite et fiable.
+- **Google Apps Script** : gratuit, tourne 24h/24, s'intègre nativement à Gmail et Sheets.
+- **Nominatim** : OpenStreetMap gratuit, pas de clé API requise.
+### Ce qui a été écarté
+- **Claude API** : Le forfait Claude Pro standard n'inclut pas l'accès API. Aurait coûté ~0,01€/annonce en plus.
+- **Gemini API** : Bloqué par obligation de facturation.
+- **n8n Cloud** : Version payante (~20€/mois), gardée en réserve si la v1.3 ne suffit pas.
+---
+ 
+## 📋 Critères d'analyse (à personnaliser)
+ 
+| Critère | Valeur | Éliminatoire ? |
+|---|---|---|
+| Surface minimum | [À_DÉFINIR] m² | OUI |
+| Type minimum | [À_DÉFINIR] | OUI |
+| Balcon ou terrasse | [À_DÉFINIR] | OUI (si absent confirmé) |
+| Parking | [À_DÉFINIR] | OUI (si absent confirmé) |
+| Loyer max | [À_DÉFINIR] € charges comprises | OUI |
+| Rez-de-chaussée | [À_DÉFINIR] | OUI |
+| Villes acceptées | [À_DÉFINIR] | OUI |
+| Type de bail | [À_DÉFINIR] | OUI |
+| Meublé | [À_DÉFINIR] | NON |
+ 
+**Règle spéciale :** si un critère n'est pas mentionné dans l'annonce (ex: étage), il passe en "non précisé" → statut PARTIEL au lieu de NON. Évite d'éliminer par manque d'info.
+ 
+---
+ 
+## 🔄 Flux détaillé (étape par étape)
+ 
+```
+1. DÉCLENCHEUR (toutes les 10 min)
+   → GmailApp.search('from:seloger.com is:unread')
+ 
+2. EXTRACTION URLs
+   → Parse HTML du mail → regex → URLs uniques
+ 
+3. DÉDOUBLONNAGE
+   → Cache PropertiesService (max 500 URLs)
+   → Skip si déjà traitée
+ 
+4. COLLECTE INFOS
+   → Extraction depuis corps du mail
+   → Scraping page SeLoger (User-Agent Chrome 126)
+   → Extraction JSON-LD si disponible
+   → Fusion (scraping prioritaire)
+ 
+5. ANALYSE IA (Groq LLaMA 3.3 70B)
+   → Tâche 1 : classer les critères
+   → Tâche 2 : générer accroche personnalisée
+   → Retour JSON structuré
+ 
+6. GÉOCODAGE
+   → Nominatim (adresse + ville)
+   → Fallback coordonnées ville si échec
+ 
+7. NOTIFICATION TELEGRAM (3 scénarios)
+   → OK → 🚨 URGENT + son + téléphone + "APPELLE MAINTENANT"
+   → PARTIEL → ⚠️ normal + critères non précisés
+   → NON → ❌ silencieux + motif refus
+ 
+8. ENREGISTREMENT SHEET (22 colonnes)
+   → 19 colonnes auto + 4 colonnes manuelles (R/S/T/W)
+   → Ligne colorée selon statut (vert/jaune/rouge/gris)
+   → Listes déroulantes pour colonnes de suivi
+ 
+9. MARQUER URL COMME TRAITÉE
+   → Ajout au cache anti-doublon
+   → Pause 2s
+   → Retour étape 1 au prochain cycle
+```
+ 
+---
+ 
+## 📊 Structure du Google Sheet (22 colonnes)
+ 
+### Colonnes automatiques (remplies par l'agent)
+| Col | Donnée |
+|---|---|
+| A | Date d'analyse |
+| B | Ville |
+| C | Titre de l'annonce |
+| D | Surface (m²) |
+| E | Loyer charges comprises (€) |
+| F | Nombre de pièces |
+| G | Étage |
+| H | Balcon / Terrasse |
+| I | Parking |
+| J | Meublé |
+| K | Statut IA (OK / PARTIEL / NON) |
+| L | Recommandation IA (CONTACTER / VÉRIFIER / IGNORER) |
+| M | Critères manquants (détail) |
+| N | Résumé IA (2 phrases) |
+| O | Message envoyé (AUTO / NON) |
+| P | Lien annonce (cliquable HYPERLINK) |
+| Q | Téléphone propriétaire |
+| U | Latitude GPS |
+| V | Longitude GPS |
+ 
+### Colonnes manuelles (à remplir par l'utilisateur)
+| Col | Donnée | Liste déroulante |
+|---|---|---|
+| R | Réponse reçue | EN ATTENTE / OUI / NON |
+| S | Statut final | EN COURS / VISITE PRÉVUE / VISITÉ / REFUSÉ / ACCEPTÉ / ANNULÉ |
+| T | Date de visite | Format dd/MM/yyyy |
+| W | Notes personnelles | Texte libre |
+ 
+Les colonnes U et V (GPS) serviront à la future carte Leaflet.js.
+ 
+---
+ 
+## 📱 Les 3 scénarios de notification Telegram
+ 
+### 🚨 Scénario OK (tous critères validés) — SONORE
+- Emoji URGENT + tous critères validés
+- Numéro de téléphone du propriétaire mis en avant
+- Bouton "APPELLE MAINTENANT"
+- Message enrichi par l'IA prêt à copier-coller
+### ⚠️ Scénario PARTIEL (critères manquants ou non précisés) — Normal
+- Résumé + critères validés
+- Liste des points non précisés à vérifier
+- **(v1.5)** Bouton « ✍️ Rédige-moi le message » → au clic, le message propriétaire est généré et envoyé
+  (remplace l'ancien affichage conditionnel selon recommandation = CONTACTER)
+### ❌ Scénario NON (au moins 1 critère éliminatoire violé) — SILENCIEUX
+- Motif(s) de refus listés
+- Notification sans son pour ne pas déranger
+- **PAS de bouton "Rédige-moi le message"** (voulu : une annonce refusée n'est pas à contacter)
+> ⚠️ **Ne pas re-diagnostiquer un faux bug :** le bouton « ✍️ Rédige-moi le message » apparaît
+> **UNIQUEMENT sur les annonces PARTIEL**. Sur une annonce **NON**, son absence est normale et
+> voulue. (Historique : un message NON sans bouton avait été pris à tort pour un dysfonctionnement.)
+ 
+---
+ 
+## 📧 Message type pour le propriétaire (modèle à personnaliser)
+ 
+Le message de base (dans la constante `MESSAGE_TYPE`) :
+ 
+```
+Bonjour madame, monsieur,
+ 
+[VOTRE_ACCROCHE_PERSONNELLE], je recherche un logement calme et bien situé
+pour m'installer dans le secteur de [VILLE]. [ACCROCHE_PERSONNALISEE]
+[VOTRE_SITUATION_PROFESSIONNELLE], je suis quelqu'un de rigoureux, discret
+et soigneux. [VOS_REVENUS]. Mon dossier de location est dès à présent
+complet, prêt à être envoyé. [VOS_GARANTIES].
+ 
+Je reste disponible pour une visite à votre convenance.
+Bien cordialement
+```
+ 
+**Variables remplies automatiquement par l'IA (par annonce) :**
+- `[VILLE]` → ville de l'annonce détectée
+- `[ACCROCHE_PERSONNALISEE]` → phrase générée selon le contenu de l'annonce (proche mer, gare, calme, vue, rénové, commerces, etc.). Si aucun point d'intérêt, laissé vide.
+**Variables à remplir une fois, avec votre propre situation :**
+- `[VOTRE_ACCROCHE_PERSONNELLE]` → une courte phrase d'intro sur vous (loisirs, mode de vie...)
+- `[VOTRE_SITUATION_PROFESSIONNELLE]` → votre métier ou situation actuelle
+- `[VOS_REVENUS]` → type et montant de vos revenus
+- `[VOS_GARANTIES]` → garanties dont vous disposez (Visale, garants, etc.)
+Exemples d'accroches générées par l'IA :
+- "La proximité de la gare est un vrai plus pour mes trajets quotidiens."
+- "La vue mer correspond parfaitement à mon mode de vie sportif."
+- "Le cadre calme et résidentiel est exactement ce que je recherche."
+---
+ 
+## 🔑 Configuration à connaître
+ 
+**3 clés secrètes dans le script (en haut du fichier `.js`) :**
+- `TELEGRAM_TOKEN` — Bot créé via @BotFather sur Telegram
+- `TELEGRAM_CHAT_ID` — Récupéré via @userinfobot
+- `GROQ_API_KEY` — Créée sur console.groq.com
+**Piège vécu :** le bot a été créé puis les tests lancés sans avoir envoyé `/start` au bot. Résultat : aucun message reçu. Le `/start` est obligatoire pour que Telegram autorise le bot à envoyer des messages.
+ 
+---
+ 
+## 🐛 Problèmes rencontrés et résolus
+ 
+| Problème | Cause | Solution |
+|---|---|---|
+| Aucun message Telegram reçu | Bot n'a jamais été démarré | Envoyer `/start` au bot |
+| Erreur "Analyse impossible" avec Gemini | Facturation Google Cloud demandée | Bascule vers Groq |
+| Erreur "model decommissioned" avec Groq | `llama3-8b-8192` retiré | Passage à `llama-3.3-70b-versatile` |
+| "Cannot read properties of undefined" | Format de réponse Groq mal parsé | Ajout du check `data.error` + log brut |
+| Erreur géocodage "Unexpected token '<'" | Nominatim renvoie XML au lieu de JSON | Header `Accept: application/json` + vérif `texte.charAt(0) === '['` |
+| **Mail ouvert mais 0 annonce traitée** | Regex URL trop stricte (ratait le format tracking SeLoger) | Regex élargie + résolution des redirections + alerte Telegram si 0 URL |
+| **Analyse IA en ERREUR sur vraies annonces** | `max_tokens: 900` trop bas → JSON tronqué → parse échoue | Passage à `max_tokens: 1500` + `response_format: json_object` + logs bruts |
+| **Surface fausse (ex: 88 au lieu de 47,88)** | Regex `(\d+)` cassait sur la virgule décimale FR → prenait `88` de `47,88` | Regex `(\d+(?:[.,]\d+)?)` + `parseFloat` + `Math.round` |
+| **Ville toujours la même** | Nom d'agence immobilière présent dans la signature du mail empoisonnait la détection | Détection prioritaire via le code postal : motif `Ville (XXXXX)` |
+ 
+### ⚠️ Le blocage DataDome (à comprendre absolument)
+ 
+Depuis cette session, **le scraping SeLoger renvoie systématiquement HTTP 403**. SeLoger utilise
+**DataDome** (anti-bot). Apps Script perd sur les 3 fronts :
+- IP datacenter Google (blacklistée)
+- `UrlFetchApp` n'exécute pas le JavaScript (le défi DataDome n'est pas résolu)
+- Pas d'empreinte navigateur réaliste
+**Contournements possibles (tous écartés pour l'instant) :**
+| Solution | Coût |
+|---|---|
+| API scraping (ScrapingBee/ScraperAPI, gèrent DataDome) | free ~1000 req/mois puis ~30€/mois |
+| Navigateur headless Puppeteer + stealth sur VPS | ~5€/mois + code |
+| Proxies résidentiels rotatifs | 50€+/mois |
+ 
+**Décision :** ne pas contourner. Le mail d'alerte contient déjà prix/surface/pièces/ville. Le
+scraping n'ajoutait qu'étage/balcon/parking → vérifiables d'un clic. Statut PARTIEL = comportement
+correct et honnête. Rebrancher ScrapingBee (free tier) reste l'option propre si besoin un jour.
+ 
+---
+ 
+## 📁 Fichiers du projet
+ 
+| Fichier | Rôle |
+|---|---|
+| `agent_appartement_v1.5.js` | Script complet à coller dans Google Apps Script (version courante) |
+| `agent_appartement_v1.2.js` | Version d'archive |
+| `agent_appartement_v1.1.js` | Version d'archive |
+| `architecture_agent_appartement_v1.3.md` | Documentation d'architecture détaillée |
+| `HANDOFF_agent_appartement.md` | Ce fichier — reprise projet |
+ 
+---
+ 
+## 🧪 Fonctions de test disponibles
+ 
+Dans le script v1.3, ces fonctions sont prêtes à être exécutées depuis Apps Script :
+ 
+| Fonction | Ce qu'elle teste |
+|---|---|
+| `testerTelegram()` | Connexion bot → doit envoyer un message de test |
+| `testerAppartOK()` | Simule appart validant tous les critères → alerte URGENTE |
+| `testerAppartPartiel()` | Simule appart avec critères non précisés → alerte normale |
+| `testerAppartNon()` | Simule un appart refusé (RDC + studio) → refus silencieux |
+| `installerDeclencheur()` | Active la surveillance auto toutes les 10 min |
+| `resetUrlsTraitees()` | Vide le cache anti-doublon (pour retester une URL) |
+| `retraiterDernierMail()` | **(v1.4)** Rejoue le dernier mail SeLoger en forçant (ignore le cache) — outil de diagnostic |
+| `dumpDernierMail()` | **(v1.4)** Affiche le texte visible du dernier mail — sert à analyser sa structure |
+| `configurerWebhook()` | **(v1.5)** Enregistre l'URL du Web App auprès de Telegram (à lancer 1 fois après déploiement) |
+| `supprimerWebhook()` | **(v1.5)** Désactive le webhook (retour arrière) |
+| `testerBouton()` | **(v1.5)** Envoie une fausse annonce PARTIEL avec bouton — teste le rendu sans vrai mail |
+ 
+### 🔘 Bouton interactif Telegram (v1.5) — déploiement
+ 
+Le bouton « Rédige-moi le message » nécessite que Telegram puisse **appeler** le script.
+Étapes (à refaire si l'URL de déploiement change) :
+ 
+1. Coller le script v1.5 dans Apps Script + sauvegarder
+2. **Déployer → Nouveau déploiement → type Application Web**
+   - Exécuter en tant que : **Moi**
+   - Qui a accès : **Tout le monde** (obligatoire pour que Telegram joigne le script ; `doPost`
+     ne traite que les clics de bouton, n'expose aucun secret)
+3. Copier l'URL `…/exec` → la coller dans la constante `WEBHOOK_URL` en haut du script → sauvegarder
+4. Lancer `configurerWebhook()` une fois → vérifier `{"ok":true}` dans les logs
+5. Tester avec `retraiterDernierMail()` → notif PARTIEL avec bouton → clic → message reçu
+**Piège :** après toute modif du code, redéployer via *Gérer les déploiements → modifier → Nouvelle
+version* pour **garder la même URL**. Un déploiement neuf change l'URL → relancer `configurerWebhook()`.
+ 
+**Mécanique interne :** à chaque notif, `stockerPourMessage()` range `{ville, accroche}` dans
+PropertiesService sous la clé `MSG_<idAnnonce>`. Le bouton porte `callback_data: 'msg_<idAnnonce>'`.
+Au clic, `doPost` → `gererClicBouton()` retrouve les infos, régénère le message via
+`construireMessage()` et l'envoie. `answerCallbackQuery` stoppe l'animation du bouton.
+ 
+**ID de l'annonce (`extraireIdAnnonce`) :** prend le numéro à 6+ chiffres de l'URL. Si l'URL n'en a
+pas (lien de tracking), fallback sur un hash court de l'URL (`hashCourt()`) → l'id n'est **jamais
+vide**, donc le bouton apparaît toujours sur les PARTIEL.
+ 
+**Anti-boucle (`doPost`) :** un Web App Apps Script répond via redirection, que Telegram ne
+considère pas toujours comme un "200 OK" → il rejoue le clic en boucle. Parade : `dejaTraiteUpdate()`
+mémorise les 50 derniers `update_id` et ignore les répétitions ; `LockService` sérialise les clics
+simultanés. Fonction de test : `testerBouton()` envoie une fausse annonce PARTIEL pour vérifier le
+rendu du bouton sans attendre un vrai mail.
+ 
+**Ordre recommandé au premier déploiement :** 1 → 2 → 3 → 4 → vérifier le Sheet → 5
+ 
+---
+ 
+## 🎨 Bilan cartographique futur (à faire)
+ 
+Quand la recherche d'appartement sera terminée, générer une page HTML avec :
+ 
+- **Carte Leaflet.js** centrée sur la zone de recherche
+- **Marqueurs colorés** selon le statut final :
+  - 🟢 Vert = ACCEPTÉ
+  - 🟠 Orange = VISITE PRÉVUE ou VISITÉ
+  - 🔴 Rouge = REFUSÉ
+  - ⚪ Gris = EN ATTENTE / sans réponse
+  - 🔵 Bleu = EN COURS
+- **Popup au clic** : résumé, prix, surface, lien annonce
+- **Tableau filtrable** en dessous de la carte (par ville, statut, tranche prix)
+- **Statistiques** : total analysé, taux de réponse, nombre de visites, durée de recherche
+**Toutes les données nécessaires sont déjà dans le Sheet (colonnes U/V pour GPS, R/S/T pour suivi).**
+Il suffira de générer un HTML statique qui lit le Sheet via l'API Google Sheets ou un export CSV.
+ 
+---
+ 
+## 👤 Contexte utilisateur (à personnaliser)
+ 
+Adaptez cette section avec votre propre situation. Elle sert de mémoire pour l'IA qui reprend le projet.
+ 
+- **Situation** : [À_DÉFINIR — ex: emploi, études, reconversion...]
+- **Recherche** : Appartement pour s'installer dans [À_DÉFINIR — zone géographique]
+- **Revenus** : [À_DÉFINIR]
+- **Garanties** : [À_DÉFINIR — ex: Visale, garants...]
+- **Style de travail préféré** : [À_DÉFINIR]
+- **Niveau technique** : [À_DÉFINIR]
+- **Contrainte linguistique** : [À_DÉFINIR]
+- **Préférence de format** : [À_DÉFINIR]
+**Style d'interaction préféré (exemple) :**
+- Anticiper les questions et proposer des choix clairs
+- Signaler à l'avance si un résultat risque d'être cassé
+- Proposer des alternatives plutôt que de produire du contenu de mauvaise qualité
+- Rédiger par avance des questions de clarification si la requête est incomplète
+---
+ 
+## 📖 Historique des versions
+ 
+| Version | Changements majeurs |
+|---|---|
+| v1.0 | Version initiale avec Gemini API |
+| v1.1 | Bascule Gemini → Groq (LLaMA 3.3 70B) suite blocage facturation |
+| v1.2 | Alerte URGENTE, message enrichi par IA, extraction téléphone, Sheet 22 colonnes avec listes déroulantes + GPS, 4 fonctions de test |
+| v1.3 | Fix géocodage Nominatim, dédoublonnage URLs (cache 500 max), description étendue 1000 char, User-Agent Chrome 126, logs détaillés, fonction `resetUrlsTraitees()` |
+| v1.4 | Regex URL élargie (tracking + redirections), fix analyse IA (`max_tokens: 1500` + `response_format: json_object`), **fix surface décimale FR** (`47,88` → 48), **fix ville via code postal** (fin du piège nom d'agence dans le texte du mail), alerte Telegram si 0 URL, fonctions `retraiterDernierMail()` et `dumpDernierMail()`. Constat : scraping SeLoger bloqué (DataDome 403) → agent basé sur les données du mail |
+| v1.5 | **Bouton Telegram interactif "✍️ Rédige-moi le message"** sur les annonces PARTIEL (pas sur NON). Webhook `doPost` + `configurerWebhook()`/`supprimerWebhook()`. Stockage ville+accroche par annonce (clé `MSG_<id>`), message régénéré à la demande. Anti-boucle (dédup `update_id` + `LockService`). ID annonce increvable (numéro ou hash de l'URL). Fonction `testerBouton()`. Nécessite déploiement en Application Web |
+ 
+---
+ 
+## 🚀 Comment reprendre le projet
+ 
+Si tu es un autre modèle et que l'utilisateur te demande de continuer :
+ 
+1. **Lis ce fichier en entier** — tu as maintenant tout le contexte
+2. **Demande à l'utilisateur où il en est** : Le déclencheur tourne-t-il ? A-t-il reçu des annonces ? A-t-il commencé le suivi manuel ?
+3. **Prochaines étapes probables** :
+   - Générer le bilan cartographique HTML (Leaflet.js) quand la recherche sera terminée
+   - Ajuster les critères si SeLoger change son HTML
+   - Éventuellement basculer vers version payante (n8n + WhatsApp) si besoin
+4. **Ne pas régénérer le script v1.3** sauf demande explicite — il est déjà déployé et fonctionnel
+5. **Style d'échange** : à adapter selon les préférences indiquées dans la section "Contexte utilisateur"
+---
+ 
+**Fin du handoff. Bon travail au prochain modèle. 🤝**
